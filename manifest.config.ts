@@ -15,14 +15,11 @@ export default defineManifest({
     default_popup: 'src/popup/index.html',
   },
   permissions: [
-    'sidePanel',
     'contentSettings',
   ],
   content_scripts: [{
-    js: ['src/content/main.tsx'],
+    js: ['src/content/index.tsx'],
     matches: ['https://*/*'],
   }],
-  side_panel: {
-    default_path: 'src/sidepanel/index.html',
-  },
+  options_page: 'src/options/index.html',
 })

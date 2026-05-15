@@ -38,15 +38,32 @@ npm run build
 - `src/content/` - Content scripts
 - `manifest.config.ts` - Chrome extension manifest configuration
 
-## Documentation
+## 目录结构
 
-- [React Documentation](https://reactjs.org/)
-- [Vite Documentation](https://vitejs.dev/)
-- [CRXJS Documentation](https://crxjs.dev/vite-plugin)
-
-## Chrome Extension Development Notes
-
-- Use `manifest.config.ts` to configure your extension
-- The CRXJS plugin automatically handles manifest generation
-- Content scripts should be placed in `src/content/`
-- Popup UI should be placed in `src/popup/`
+```bash
+pdd_auto/
+├── src/
+│   ├── popup/              # Popup 页面
+│   │   ├── App.tsx
+│   │   ├── main.tsx
+│   │   └── index.html
+│   ├── options/            # Options 页面
+│   │   ├── App.tsx
+│   │   ├── main.tsx
+│   │   └── index.html
+│   ├── content/            # Content Script（页面注入）
+│   │   ├── index.tsx       # Shadow DOM 入口
+│   │   └── App.tsx         # 纯 Tailwind，不用 shadcn
+│   ├── components/         # shadcn 组件目录
+│   │   └── ui/
+│   │       ├── button.tsx
+│   │       └── ...         # 其他安装的组件
+│   ├── lib/
+│   │   └── utils.ts        # cn() 工具函数
+│   └── content/views/      # shadcn 创建的目录
+│       └── index.css       # Tailwind 入口
+├── manifest.json
+├── vite.config.ts
+├── tailwind.config.ts      # 或 .js
+└── package.json
+```
