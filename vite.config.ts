@@ -23,4 +23,11 @@ export default defineConfig({
       origin: [/chrome-extension:\/\//],
     },
   },
+  build: {
+    rolldownOptions: {
+      input: {
+        inject: "src/content/views/inject.ts",
+      },
+    },
+  },
 });
