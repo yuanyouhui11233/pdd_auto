@@ -2,7 +2,7 @@ import Logo from "@/assets/crx.svg";
 import { CheckCircle2, ClipboardPenLine, GripHorizontal, Loader2, ShoppingBag, XCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { parserDataByJD } from "../collectors/jdProduct";
-import type { CapturedJdResponse } from "../types/jdDetailResponse";
+import type { CapturedJdResponse, IParseData } from "../types/jdDetailResponse";
 
 type Position = {
   x: number;
@@ -27,6 +27,22 @@ type AppProps = {
 };
 
 const EDGE_PADDING = 8;
+
+/**
+ * 采集后的京东商品解析数据缓存 key
+ */
+const PDD_AUTO_PARSED_JD_PRODUCT_STORAGE_KEY = "pdd_auto_parsed_jd_product";
+
+type CachedParsedJdProduct = {
+  // parserDataByJD 处理后的商品数据
+  data: IParseData;
+
+  // 写入缓存的时间，方便后续判断数据新旧
+  cachedAt: string;
+
+  // 当前商品页链接，方便后续确认缓存来源
+  sourceUrl: string;
+};
 
 const menuItems = [
   {
@@ -105,6 +121,10 @@ function App({ getLatestJdDetailResponse }: AppProps) {
     try {
       const parseData = parserDataByJD(latestJdDetailResponse?.data);
       console.log("处理好的数据", parseData);
+
+      // 采集成功后把解析完成的数据写入扩展缓存，后续自动填写可直接读取
+      await saveParsedJdProductToCache(parseData);
+
       setCollectStatus({
         type: "success",
         message: `已采集：${formatTitle(parseData.title)}`,
@@ -191,6 +211,25 @@ function App({ getLatestJdDetailResponse }: AppProps) {
       )}
     </div>
   );
+}
+
+/**
+ * 保存解析后的京东商品数据到 chrome.storage.local
+ */
+async function saveParsedJdProductToCache(parseData: IParseData) {
+  if (typeof chrome === "undefined" || !chrome.storage?.local) {
+    throw new Error("扩展缓存不可用，请确认 manifest 已开启 storage 权限");
+  }
+
+  const cachedData: CachedParsedJdProduct = {
+    data: parseData,
+    cachedAt: new Date().toISOString(),
+    sourceUrl: parseData.goodsUrl,
+  };
+
+  await chrome.storage.local.set({
+    [PDD_AUTO_PARSED_JD_PRODUCT_STORAGE_KEY]: cachedData,
+  });
 }
 
 function formatTitle(title: string) {
