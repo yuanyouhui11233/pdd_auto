@@ -19,6 +19,10 @@ const PDD_AUTO_MESSAGE_SOURCE = "pdd-auto";
  */
 const JD_DETAIL_WARE_BUSINESS_RESPONSE_TYPE = "JD_DETAIL_WARE_BUSINESS_RESPONSE";
 /**
+ * 京东商品页网络响应缓存 key
+ */
+const PDD_AUTO_JD_NET_DATA_STORAGE_KEY = "pdd_auto_jd_net_data";
+/**
  * 京东详情页接口 functionId
  *
  * 京东很多接口都会通过:
@@ -27,6 +31,21 @@ const JD_DETAIL_WARE_BUSINESS_RESPONSE_TYPE = "JD_DETAIL_WARE_BUSINESS_RESPONSE"
  * 来区分接口功能
  */
 const JD_DETAIL_FUNCTION_ID = "pc_detailpage_wareBusiness"; // 商品详情
+/**
+ * 京东商品页补充接口关键字
+ *
+ * pc_detailpage_wareBusiness 缺少详情图和部分价格，这些通常来自价格或详情描述接口
+ */
+const JD_SUPPLEMENT_REQUEST_PATTERNS = [
+    /\/\/p\.3\.cn\/prices\/mgets/i,
+    /\/\/cd\.jd\.com\/description\//i,
+    /\/\/d\.3\.cn\/desc\//i,
+    /\/\/dx\.3\.cn\/desc\//i,
+    /\/\/item\.jd\.com\/desc\//i,
+    /\/\/item\.jd\.com\/ware\/detail/i,
+    /functionId=(?:pc_detailpage_price|pc_detailpage_desc|pc_detailpage_getDesc)/i,
+    /(?:skuId|sku|wareId)=\d{5,}.*(?:desc|description)/i,
+];
 /**
  * JSONP callback 参数名
  *
@@ -42,7 +61,7 @@ function shouldCaptureJdDetailRequest(method, url) {
         return false;
     }
     // 简单字符串判断
-    if (url.includes("api.m.jd.com") && url.includes(JD_DETAIL_FUNCTION_ID)) {
+    if ((url.includes("api.m.jd.com") || url.includes("color.jd.hk")) && url.includes(JD_DETAIL_FUNCTION_ID)) {
         return true;
     }
     /**
@@ -55,7 +74,10 @@ function shouldCaptureJdDetailRequest(method, url) {
      */
     try {
         const parsedUrl = new URL(url, window.location.href);
-        return parsedUrl.hostname === "api.m.jd.com" && parsedUrl.searchParams.get("functionId") === JD_DETAIL_FUNCTION_ID;
+        return (
+            (parsedUrl.hostname === "api.m.jd.com" || parsedUrl.hostname === "color.jd.hk") &&
+            parsedUrl.searchParams.get("functionId") === JD_DETAIL_FUNCTION_ID
+        );
     }
     catch {
         return false;
@@ -90,6 +112,66 @@ function shouldCaptureJdDetailRequestBody(body) {
     return false;
 }
 /**
+ * 判断是否为京东商品页补充接口
+ */
+function shouldCaptureJdSupplementRequest(method, url, requestBody) {
+    const upperMethod = method.toUpperCase();
+
+    if (shouldCaptureJdDetailRequest(method, url) || shouldCaptureJdDetailRequestBody(requestBody)) {
+        return true;
+    }
+
+    if (upperMethod !== "GET" && upperMethod !== "POST") {
+        return false;
+    }
+
+    return JD_SUPPLEMENT_REQUEST_PATTERNS.some((pattern) => pattern.test(url));
+}
+/**
+ * 判断补充接口类型，方便 parserDataByJD 按来源提取详情图或价格
+ */
+function getJdNetworkKind(url, requestBody) {
+    if (shouldCaptureJdDetailRequest("GET", url) || shouldCaptureJdDetailRequestBody(requestBody)) {
+        return "wareBusiness";
+    }
+
+    if (/prices|price/i.test(url)) {
+        return "price";
+    }
+
+    if (/description|desc/i.test(url)) {
+        return "description";
+    }
+
+    return "supplement";
+}
+/**
+ * 缓存京东商品页接口响应
+ *
+ * 缓存最近接口响应供 parserDataByJD 同步补齐缺失字段
+ */
+function cacheJdNetworkResponse(payload) {
+    try {
+        const cacheRecord = {
+            kind: getJdNetworkKind(payload.url, payload.requestBody),
+            method: payload.method,
+            url: payload.url,
+            data: payload.data,
+            capturedAt: payload.capturedAt,
+        };
+        const cacheText = localStorage.getItem(PDD_AUTO_JD_NET_DATA_STORAGE_KEY);
+        const cachedRecords = cacheText ? JSON.parse(cacheText) : [];
+        const records = Array.isArray(cachedRecords) ? cachedRecords : [cachedRecords];
+        const nextRecords = [cacheRecord, ...records.filter((record) => record && record.url !== cacheRecord.url)].slice(0, 30);
+
+        localStorage.setItem(PDD_AUTO_JD_NET_DATA_STORAGE_KEY, JSON.stringify(nextRecords));
+        window.dispatchEvent(new CustomEvent("pdd-auto-jd-net", { detail: cacheRecord }));
+    }
+    catch (error) {
+        console.warn("[pdd_auto] 缓存京东商品页接口响应失败:", error);
+    }
+}
+/**
  * 发送数据给 content script
  *
  * inject.ts 运行在页面环境
@@ -112,7 +194,9 @@ function sendToPlugin(payload) {
  */
 function debugMatchedUrl(source, method, url, requestBody) {
     const bodyMatched = shouldCaptureJdDetailRequestBody(requestBody);
-    if (url.includes("api.m.jd.com") || url.includes(JD_DETAIL_FUNCTION_ID) || bodyMatched) {
+    const supplementMatched = shouldCaptureJdSupplementRequest(method, url, requestBody);
+
+    if (url.includes("api.m.jd.com") || url.includes("color.jd.hk") || url.includes(JD_DETAIL_FUNCTION_ID) || bodyMatched || supplementMatched) {
         console.log("[pdd_auto] 发现京东接口请求:", {
             source,
             method,
@@ -120,6 +204,7 @@ function debugMatchedUrl(source, method, url, requestBody) {
             requestBody,
             // 是否真正命中目标接口
             matched: shouldCaptureJdDetailRequest(method, url) || bodyMatched,
+            supplementMatched,
         });
     }
 }
@@ -214,22 +299,30 @@ window.fetch = async (input, init) => {
     const url = getFetchUrl(input);
     const method = getFetchMethod(input, init);
     const requestBody = init?.body;
-    // 是否命中目标接口
+    // 是否命中目标详情接口
     const matched = shouldCaptureJdDetailRequest(method, url) || shouldCaptureJdDetailRequestBody(requestBody);
+    // 是否命中详情图、价格等补充接口
+    const supplementMatched = shouldCaptureJdSupplementRequest(method, url, requestBody);
     debugMatchedUrl("fetch", method, url, requestBody);
-    if (matched) {
+    if (matched || supplementMatched) {
         response
             .clone()
             .text()
             .then((text) => {
-            sendToPlugin({
+            const payload = {
                 method,
                 url,
                 requestBody,
                 // 解析接口数据
                 data: parseResponseText(text),
                 capturedAt: new Date().toISOString(),
-            });
+            };
+
+            cacheJdNetworkResponse(payload);
+
+            if (matched) {
+                sendToPlugin(payload);
+            }
         })
             .catch((error) => {
             console.warn("[pdd_auto] 读取京东商品详情接口响应失败:", error);
@@ -282,21 +375,30 @@ XMLHttpRequest.prototype.send = function (...args) {
         const method = request?.method ?? "GET";
         const url = request?.url ?? "";
         const requestBody = request?.requestBody;
-        // 不是目标接口直接跳过
-        if (!shouldCaptureJdDetailRequest(method, url) && !shouldCaptureJdDetailRequestBody(requestBody)) {
+        const matched = shouldCaptureJdDetailRequest(method, url) || shouldCaptureJdDetailRequestBody(requestBody);
+        const supplementMatched = shouldCaptureJdSupplementRequest(method, url, requestBody);
+
+        // 不是目标接口和补充接口直接跳过
+        if (!matched && !supplementMatched) {
             return;
         }
         try {
             const responseData = this.responseType && this.responseType !== "text"
                 ? this.response
                 : parseResponseText(typeof this.responseText === "string" ? this.responseText : "");
-            sendToPlugin({
+            const payload = {
                 method,
                 url,
                 requestBody,
                 data: responseData,
                 capturedAt: new Date().toISOString(),
-            });
+            };
+
+            cacheJdNetworkResponse(payload);
+
+            if (matched) {
+                sendToPlugin(payload);
+            }
         }
         catch (error) {
             console.warn("[pdd_auto] 读取京东商品详情 XHR 响应失败:", error);
@@ -321,7 +423,7 @@ const jsonpCallbackUrlMap = new Map();
  */
 function handlePossibleJsonpScriptUrl(url) {
     debugMatchedUrl("script", "GET", url);
-    if (!shouldCaptureJdDetailRequest("GET", url)) {
+    if (!shouldCaptureJdDetailRequest("GET", url) && !shouldCaptureJdSupplementRequest("GET", url)) {
         return;
     }
     const callbackName = getJsonpCallbackName(url);
@@ -407,12 +509,19 @@ function wrapJsonpCallback(callbackName, callback) {
     }
     const wrappedCallback = function (...args) {
         console.log("[pdd_auto] JSONP callback 已执行:", callbackName);
-        sendToPlugin({
+        const payload = {
             method: "GET",
             url: jsonpCallbackUrlMap.get(callbackName) ?? "",
             data: args.length === 1 ? args[0] : args,
             capturedAt: new Date().toISOString(),
-        });
+        };
+
+        cacheJdNetworkResponse(payload);
+
+        if (shouldCaptureJdDetailRequest(payload.method, payload.url)) {
+            sendToPlugin(payload);
+        }
+
         return callback.apply(this, args);
     };
     /**

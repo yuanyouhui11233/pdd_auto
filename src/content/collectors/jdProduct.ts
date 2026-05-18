@@ -1,85 +1,95 @@
-import { IParseData } from "../types/jdDetailResponse";
+import type { IParseData, ISkuTitle } from "../types/jdDetailResponse";
 
-/**
- * 京东商品数据结构
- */
-export type JdProduct = {
-  // 平台标识
-  platform: "jd";
+type UnknownRecord = Record<string, unknown>;
 
-  // 商品 skuId
-  skuId: string;
+type JdAttribute = {
+  labelName?: unknown;
+  labelValue?: unknown;
+};
 
-  // 商品标题
-  title: string;
+type JdImageItem = {
+  imageUrl?: unknown;
+  fullImageUrl?: unknown;
+  imgUrl?: unknown;
+  url?: unknown;
+};
 
-  // 商品价格
-  price: string;
-
-  // 商品主图
-  image: string;
-
-  // 店铺名称
-  shopName: string;
-
-  // 商品分类面包屑
-  categories: string[];
-
-  // 当前商品链接
-  url: string;
-
-  // 采集时间
-  collectedAt: string;
+type JdSkuButton = {
+  fullImageUrl?: unknown;
+  imageUrl?: unknown;
+  imgUrl?: unknown;
+  text?: unknown;
+  name?: unknown;
+  title?: unknown;
+  skuId?: unknown;
+  skuList?: unknown;
 };
 
 /**
- * chrome.storage.local 存储 key
+ * 京东主图接口里只有 jfs 路径时使用的图片域名
  */
-const STORAGE_KEY = "pdd_auto_collected_products";
+const JD_MAIN_IMAGE_PREFIX = "https://img30.360buyimg.com/popWareDetail/";
 
 /**
- * 最大保存商品数量
- *
- * 防止 local storage 无限增长
+ * 京东 SKU 图接口里只有 jfs 路径时使用的图片域名
  */
-const MAX_STORED_PRODUCTS = 200;
+const JD_SKU_IMAGE_PREFIX = "https://img13.360buyimg.com/pcpubliccms/s800x800_";
 
 /**
- * JSON-LD 数据结构
- *
- * 页面中的:
- * <script type="application/ld+json">
+ * 我们注入脚本缓存京东网络响应的 localStorage key
  */
-type JsonLdRecord = Record<string, unknown>;
+const PDD_AUTO_JD_NET_DATA_STORAGE_KEY = "pdd_auto_jd_net_data";
 
 /**
- * 对外暴露:
- * 采集 + 保存商品
+ * 页面图片常见的懒加载属性
  */
-export async function collectAndSaveJdProduct() {
-  // 采集当前页面商品
-  const product = collectJdProductFromPage();
+const IMAGE_SOURCE_ATTRIBUTES = ["src", "data-src", "data-original", "data-lazy-img", "data-lazyload", "data-url"];
 
-  // 保存到 chrome.storage.local
-  await saveCollectedProduct(product);
+/**
+ * 处理 pc_detailpage_wareBusiness 京东商品详情接口响应
+ */
+export function parserDataByJD(data: unknown): IParseData {
+  const source = toRecord(data);
 
-  return product;
+  if (!source) {
+    throw new Error("未获取到京东商品详情接口数据，请刷新商品页后重试");
+  }
+
+  const parseData = createEmptyParseData();
+  const networkRecords = readJdNetworkCache();
+  const pageStateRecords = collectJdPageStateRecords();
+
+  // 接口里稳定存在的基础信息先解析出来
+  parseBaseAttributes(parseData, source);
+  parseBasicInfo(parseData, source);
+  parseMainImages(parseData, source);
+  parseSkuData(parseData, source);
+
+  // 商品详情图只从已经渲染的 #detail-main DOM 中读取
+  parseData.detailImg = collectDetailImagesFromDom();
+  mergeSkuImagesFromPage(parseData);
+  fillSkuInfo(parseData, source, pageStateRecords);
+  fillSkuPrices(parseData, source, networkRecords, pageStateRecords);
+  fillJdSkuImages(parseData);
+
+  return parseData;
 }
+
 /**
- * 处理数据保存在缓存里
+ * 初始化解析结果，保证下游读取字段时不用判断 undefined
  */
-export function parserDataByJD(data: any): IParseData {
-  const parseData: IParseData = {
+function createEmptyParseData(): IParseData {
+  return {
     baseAttr: {},
     batchMoving: false,
     category: "",
     detailImg: [],
     goodsId: "",
-    goodsUrl: "",
+    goodsUrl: getCurrentPageUrl(),
     jdSKUImg: {},
     mainImg: [],
-    platform: "",
-    platformEnum: "",
+    platform: "jd",
+    platformEnum: "JD",
     SKUImg: {},
     SKUInfo: {},
     SKUKey: {},
@@ -89,450 +99,970 @@ export function parserDataByJD(data: any): IParseData {
     title: "",
     videoUrl: "",
   };
-  // 待处理 detailImg jdSKUImg SKUImg SKUInfo  SKUPrice
-  data?.productAttributeVO.attributes.forEach((item: { labelName: string; labelValue: string }) => {
-    parseData.baseAttr[item.labelName] = item.labelValue;
-  });
-  data?.productAttributeVO.coreAttributes.forEach((item: { labelName: string; labelValue: string }) => {
-    parseData.baseAttr[item.labelName] = item.labelValue;
-  });
-  parseData.category = data?.pageConfigVO?.catName.join("-");
-  parseData.goodsId = data?.wareInfoReadMap?.product_id;
-  parseData.goodsUrl = window.location.href;
-  let baseUrl = "https://img30.360buyimg.com/popWareDetail/";
-  let skuBaseUrl = "https://img13.360buyimg.com/pcpubliccms/s800x800_";
-  parseData.mainImg = data?.mainImageVO?.carouselArea.map(
-    (item: { imageUrl?: String; siteType: String }) => baseUrl + item?.imageUrl,
-  );
-  data?.colorSizeVO?.colorSizeList.forEach(
-    (item: {
-      buttons: [
-        {
-          fullImageUrl?: string;
-          imageType?: number;
-          no: string;
-          skuId: string;
-          skuList: [string];
-          stock: string;
-          text: string;
-        },
-      ];
-      supportCustom: boolean;
-      title: string;
-    }) => {
-      parseData.SKUSort.push(item.title);
-      item.buttons.forEach((btn) => {
-        const text = btn?.text || "";
-        const skuList = btn?.skuList || [];
-        if (btn.fullImageUrl) {
-          parseData.SKUImg[btn.text] = skuBaseUrl + btn.fullImageUrl;
-        }
-        for (const skuId of skuList) {
-          if (!parseData.SKUKey[skuId]) {
-            parseData.SKUKey[skuId] = [];
-          }
-
-          parseData.SKUKey[skuId].push(text);
-        }
-      });
-    },
-  );
-  parseData.SKUKeyList = Object.keys(parseData.SKUKey);
-  parseData.title = data?.wareInfoReadMap?.product_name || "【商品名】";
-  return parseData;
 }
 
 /**
- * 从当前页面采集商品信息
+ * 解析商品参数和核心参数
  */
-function collectJdProductFromPage(): JdProduct {
-  // 当前页面 URL
-  const currentUrl = new URL(window.location.href);
-  console.log("当前页URL", currentUrl);
-  // jd商品页 origin:"https://item.jd.com"
-  // 尝试读取页面 JSON-LD
-  const jsonLdProduct = readJsonLdProduct(document);
+function parseBaseAttributes(parseData: IParseData, source: UnknownRecord) {
+  const productAttributeVO = toRecord(source.productAttributeVO);
+  const attributes = [...toArray(productAttributeVO?.attributes), ...toArray(productAttributeVO?.coreAttributes)];
 
-  // 获取 skuId
-  const skuId = getSkuId(currentUrl);
+  for (const item of attributes) {
+    const attribute = toRecord(item) as JdAttribute | null;
+    const labelName = toText(attribute?.labelName);
+    const labelValue = toText(attribute?.labelValue);
 
-  /**
-   * 判断是否为京东商品详情页
-   */
-  if (!isJdProductDetailPage(currentUrl, skuId)) {
-    throw new Error("请在京东商品详情页使用采集商品");
+    if (labelName && labelValue) {
+      parseData.baseAttr[labelName] = labelValue;
+    }
   }
+}
 
-  /**
-   * 获取商品标题
-   *
-   * 多来源兜底:
-   * 1.DOM
-   * 2.JSON-LD
-   * 3.meta
-   * 4.document.title
-   */
-  const title = firstValue([
-    getText(["#name h1", ".sku-name", "[class*='sku-name']", "h1"]),
+/**
+ * 解析商品 ID、标题、分类、链接、视频等基础信息
+ */
+function parseBasicInfo(parseData: IParseData, source: UnknownRecord) {
+  const pageConfigVO = toRecord(source.pageConfigVO);
+  const wareInfoReadMap = toRecord(source.wareInfoReadMap);
+  const mainImageVO = toRecord(source.mainImageVO);
 
-    getJsonLdString(jsonLdProduct, "name"),
-
-    getMetaContent(["meta[property='og:title']", "meta[name='title']"]),
-
-    cleanupTitle(document.title),
+  parseData.goodsId = firstText([
+    wareInfoReadMap?.product_id,
+    wareInfoReadMap?.skuId,
+    source.skuId,
+    pageConfigVO?.skuId,
+    getSkuIdFromUrl(),
   ]);
 
-  /**
-   * 标题不存在说明页面未正常加载
-   */
-  if (!title) {
-    throw new Error("未识别到商品标题，请确认当前页面已加载完成");
+  parseData.title =
+    firstText([
+      wareInfoReadMap?.product_name,
+      wareInfoReadMap?.wname,
+      wareInfoReadMap?.name,
+      source.title,
+      getTitleFromPage(),
+    ]) || "【商品名】";
+
+  parseData.category = firstText([
+    toTextList(pageConfigVO?.catName).join("-"),
+    toTextList(source.crumbs)
+      .filter((item) => item !== "京东首页")
+      .join("-"),
+  ]);
+
+  parseData.videoUrl = firstImageUrl(mainImageVO, ["videoUrl", "video_url", "playUrl"], "");
+}
+
+/**
+ * 解析商品主图，接口无数据时从页面主图区域兜底
+ */
+function parseMainImages(parseData: IParseData, source: UnknownRecord) {
+  const mainImageVO = toRecord(source.mainImageVO);
+  const carouselArea = toArray(mainImageVO?.carouselArea);
+
+  for (const item of carouselArea) {
+    const image = firstImageUrl(
+      toRecord(item) as JdImageItem | null,
+      ["imageUrl", "fullImageUrl", "imgUrl", "url"],
+      JD_MAIN_IMAGE_PREFIX,
+    );
+
+    pushUnique(parseData.mainImg, image);
+  }
+
+  // 部分页面接口没有返回完整主图列表，直接读取页面缩略图作为补充
+  for (const image of collectImagesBySelectors(["#spec-list img", "#preview img", "#spec-img", ".spec-list img"])) {
+    pushUnique(parseData.mainImg, image);
+  }
+
+  // 页面全局对象里有时会保留完整图片列表
+  for (const image of collectImagesFromPageState(["mainImageVO", "imageList", "imageListData", "wareImage"])) {
+    pushUnique(parseData.mainImg, image);
+  }
+}
+
+/**
+ * 解析规格维度、规格值、SKUKey 和接口内可得到的 SKU 图
+ */
+function parseSkuData(parseData: IParseData, source: UnknownRecord) {
+  const colorSizeVO = toRecord(source.colorSizeVO);
+  const colorSizeList = toArray(colorSizeVO?.colorSizeList);
+
+  for (const item of colorSizeList) {
+    const group = toRecord(item);
+    const title = toText(group?.title);
+
+    pushUnique(parseData.SKUSort, title);
+
+    for (const buttonItem of toArray(group?.buttons)) {
+      const button = toRecord(buttonItem) as JdSkuButton | null;
+      const skuText = firstText([button?.text, button?.name, button?.title]);
+      const skuIds = getSkuIdsFromButton(button);
+      const skuImage = firstImageUrl(button, ["fullImageUrl", "imageUrl", "imgUrl"], JD_SKU_IMAGE_PREFIX);
+
+      if (skuText && skuImage) {
+        parseData.SKUImg[skuText] = skuImage;
+        appendSkuImage(parseData.jdSKUImg, skuText, skuImage);
+      }
+
+      for (const skuId of skuIds) {
+        parseData.SKUKey[skuId] ??= [];
+        pushUnique(parseData.SKUKey[skuId], skuText);
+      }
+    }
+  }
+
+  // 单 SKU 商品可能没有 colorSizeList，这里仍然给下游保留 goodsId
+  if (Object.keys(parseData.SKUKey).length === 0 && parseData.goodsId) {
+    parseData.SKUKey[parseData.goodsId] = [];
+  }
+
+  parseData.SKUKeyList = Object.keys(parseData.SKUKey);
+}
+
+/**
+ * 从商品详情 DOM 中读取详情图
+ *
+ * 目标结构:
+ * #detail-main > div > div > img
+ */
+function collectDetailImagesFromDom() {
+  const images: string[] = [];
+
+  if (typeof document === "undefined") {
+    return images;
+  }
+
+  const detailMain = document.querySelector<HTMLElement>("#detail-main");
+
+  if (!detailMain) {
+    return images;
+  }
+
+  // 详情图只从 #detail-main 容器内采集，避免主图、SKU 图或接口缓存图片混入 detailImg
+  for (const image of Array.from(detailMain.querySelectorAll<HTMLImageElement>("img"))) {
+    pushUnique(images, normalizeImageUrl(image.currentSrc || image.src));
+
+    for (const attr of IMAGE_SOURCE_ATTRIBUTES) {
+      pushUnique(images, normalizeImageUrl(image.getAttribute(attr)));
+    }
+  }
+
+  // 去重后保持原始顺序，方便后续调试和展示
+  return images.filter(isLikelyProductImage);
+}
+
+/**
+ * 从页面规格区域补充 SKU 图片
+ */
+function mergeSkuImagesFromPage(parseData: IParseData) {
+  if (typeof document === "undefined") {
+    return;
+  }
+
+  const skuElements = document.querySelectorAll<HTMLElement>(
+    "#choose-attrs .item, .choose-attrs .item, #choose-attr-1 .item, [class*='choose'] li, [class*='choose'] .item",
+  );
+
+  for (const element of skuElements) {
+    const skuText = normalizeText(element.textContent || element.getAttribute("title") || "");
+    const image = collectImagesFromElement(element)[0] ?? "";
+
+    if (skuText && image && !parseData.SKUImg[skuText]) {
+      parseData.SKUImg[skuText] = image;
+      appendSkuImage(parseData.jdSKUImg, skuText, image);
+    }
+  }
+
+  for (const [skuText, image] of Object.entries(collectSkuImagesFromPageState())) {
+    if (!parseData.SKUImg[skuText]) {
+      parseData.SKUImg[skuText] = image;
+    }
+
+    appendSkuImage(parseData.jdSKUImg, skuText, image);
+  }
+}
+
+/**
+ * 生成 SKUInfo，接口没有标题结构时使用 SKUKey 和商品标题兜底
+ */
+function fillSkuInfo(parseData: IParseData, source: UnknownRecord, pageStateRecords: UnknownRecord[]) {
+  const skuIds = getResultSkuIds(parseData);
+  const sourceSkuInfo = collectSkuInfoFromData([source, ...pageStateRecords], new Set(skuIds));
+
+  for (const skuId of skuIds) {
+    const skuValues = parseData.SKUKey[skuId] ?? [];
+    const sourceTitle = sourceSkuInfo[skuId];
+
+    parseData.SKUInfo[skuId] = {
+      titleList: {
+        longTitle: sourceTitle?.longTitle || parseData.title,
+        skuName: sourceTitle?.skuName || skuValues.join(" "),
+      },
+    };
+  }
+}
+
+/**
+ * 生成 SKUPrice，接口没有价格时使用页面当前价格兜底当前 SKU
+ */
+function fillSkuPrices(
+  parseData: IParseData,
+  source: UnknownRecord,
+  networkRecords: UnknownRecord[],
+  pageStateRecords: UnknownRecord[],
+) {
+  const skuIds = getResultSkuIds(parseData);
+  const priceMap = {
+    ...collectSkuPricesFromData([source, ...networkRecords, ...pageStateRecords], new Set(skuIds)),
+    ...collectSkuPricesFromScripts(new Set(skuIds)),
+  };
+  const currentDomPrice = getCurrentDomPrice();
+
+  for (const skuId of skuIds) {
+    const price = priceMap[skuId] ?? (skuId === parseData.goodsId ? currentDomPrice : "");
+
+    parseData.SKUPrice[skuId] = {
+      price,
+    };
+  }
+}
+
+/**
+ * 生成 jdSKUImg，当前选中 SKU 的主图归到第一个规格值下
+ */
+function fillJdSkuImages(parseData: IParseData) {
+  for (const [skuText, image] of Object.entries(parseData.SKUImg)) {
+    appendSkuImage(parseData.jdSKUImg, skuText, image);
+  }
+
+  const selectedSkuValues = parseData.SKUKey[parseData.goodsId] ?? [];
+  const selectedImageSku =
+    selectedSkuValues.find((value) => Boolean(parseData.SKUImg[value])) || selectedSkuValues[0] || "";
+
+  if (selectedImageSku) {
+    for (const image of parseData.mainImg) {
+      appendSkuImage(parseData.jdSKUImg, selectedImageSku, image);
+    }
+  }
+}
+
+/**
+ * 从规格按钮提取关联的 skuId 列表
+ */
+function getSkuIdsFromButton(button: JdSkuButton | null) {
+  const skuIds: string[] = [];
+
+  for (const value of [button?.skuId, button?.skuList]) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        pushUnique(skuIds, normalizeSkuId(item));
+      }
+    } else {
+      for (const skuId of extractSkuIdsFromText(value)) {
+        pushUnique(skuIds, skuId);
+      }
+    }
+  }
+
+  return skuIds;
+}
+
+/**
+ * 从接口响应里递归提取 skuId -> 标题信息
+ */
+function collectSkuInfoFromData(sources: unknown[], skuIds: Set<string>) {
+  const result: Record<string, ISkuTitle> = {};
+
+  for (const source of sources) {
+    walkRecord(source, (record) => {
+      const explicitSkuId = firstText([record.skuId, record.sku_id, record.id, record.wareId, record.productId]);
+      const matchedSkuId = normalizeSkuId(explicitSkuId);
+
+      if (matchedSkuId && skuIds.has(matchedSkuId)) {
+        const title = readSkuTitle(record);
+
+        if (title) {
+          result[matchedSkuId] = title;
+        }
+      }
+
+      for (const [key, value] of Object.entries(record)) {
+        const skuId = normalizeSkuId(key);
+        const valueRecord = toRecord(value);
+
+        if (skuId && skuIds.has(skuId) && valueRecord) {
+          const title = readSkuTitle(valueRecord);
+
+          if (title) {
+            result[skuId] = title;
+          }
+        }
+      }
+    });
+  }
+
+  return result;
+}
+
+/**
+ * 从对象里读取 SKU 标题结构
+ */
+function readSkuTitle(record: UnknownRecord): ISkuTitle | null {
+  const titleList = toRecord(record.titleList);
+  const longTitle = firstText([
+    titleList?.longTitle,
+    record.longTitle,
+    record.productName,
+    record.product_name,
+    record.wname,
+    record.title,
+    record.name,
+  ]);
+  const skuName = firstText([
+    titleList?.skuName,
+    record.skuName,
+    record.sku_name,
+    record.color,
+    record.text,
+    record.saleAttrValue,
+  ]);
+
+  if (!longTitle && !skuName) {
+    return null;
   }
 
   return {
-    platform: "jd",
-
-    skuId,
-
-    title,
-
-    /**
-     * 获取价格
-     *
-     * 优先级:
-     * 1.DOM
-     * 2.JSON-LD
-     * 3.script 正则
-     */
-    price: firstValue([
-      getPriceFromDom(),
-
-      getJsonLdPrice(jsonLdProduct),
-
-      findScriptValue(/["']?(?:jdPrice|price|p)["']?\s*[:=]\s*["']?([0-9]+(?:\.[0-9]+)?)/i),
-    ]),
-
-    /**
-     * 获取商品主图
-     */
-    image: normalizeUrl(
-      firstValue([
-        getImageFromDom(),
-
-        getJsonLdImage(jsonLdProduct),
-
-        getMetaContent(["meta[property='og:image']", "meta[name='og:image']"]),
-
-        findScriptValue(/["']?(?:image|imgUrl|mainImage)["']?\s*[:=]\s*["']([^"']+\.(?:jpg|jpeg|png|webp)[^"']*)/i),
-      ]),
-    ),
-
-    /**
-     * 获取店铺名称
-     */
-    shopName: firstValue([
-      getText(["#popbox .name a", ".J-hove-wrap .name a", ".shopName", "[class*='shopName']"]),
-
-      findScriptValue(/["']?shopName["']?\s*[:=]\s*["']([^"']+)/i),
-    ]),
-
-    /**
-     * 获取分类面包屑
-     */
-    categories: getCategories(),
-
-    // 商品 URL
-    url: currentUrl.href,
-
-    // 采集时间
-    collectedAt: new Date().toISOString(),
+    longTitle,
+    skuName,
   };
 }
 
 /**
- * 判断是否为京东商品详情页
+ * 从接口响应里递归提取 skuId -> price
  */
-function isJdProductDetailPage(url: URL, skuId: string) {}
+function collectSkuPricesFromData(sources: unknown[], skuIds: Set<string>) {
+  const result: Record<string, string> = {};
+
+  for (const source of sources) {
+    walkRecord(source, (record) => {
+      const explicitSkuId = normalizeSkuId(
+        firstText([record.skuId, record.sku_id, record.id, record.wareId, record.productId, record.pid]),
+      );
+      const explicitPrice = readPrice(record);
+
+      if (explicitSkuId && skuIds.has(explicitSkuId) && explicitPrice) {
+        result[explicitSkuId] = explicitPrice;
+      }
+
+      for (const [key, value] of Object.entries(record)) {
+        const skuId = normalizeSkuId(key);
+
+        if (skuId && skuIds.has(skuId)) {
+          const price = readPrice(value);
+
+          if (price) {
+            result[skuId] = price;
+          }
+        }
+      }
+
+      const priceList = firstArray([record.priceList, record.prices, record.data, record.result]);
+
+      for (const item of priceList) {
+        const itemRecord = toRecord(item);
+
+        if (!itemRecord) {
+          continue;
+        }
+
+        const skuId = normalizeSkuId(firstText([itemRecord.skuId, itemRecord.sku_id, itemRecord.id, itemRecord.pid]));
+        const price = readPrice(itemRecord);
+
+        if (skuId && skuIds.has(skuId) && price) {
+          result[skuId] = price;
+        }
+      }
+    });
+  }
+
+  return result;
+}
 
 /**
- * 获取商品 skuId
- *
- * 多种来源:
- * 1.URL path
- * 2.query 参数
- * 3.meta
- * 4.script
+ * 从页面脚本里读取常见的 skuId -> price 结构
  */
-function getSkuId(url: URL) {
-  return firstValue([
-    // https://item.jd.com/123456.html
-    url.pathname.match(/\/(?:product\/)?(\d+)\.html/i)?.[1],
+function collectSkuPricesFromScripts(skuIds: Set<string>) {
+  const result: Record<string, string> = {};
 
-    url.searchParams.get("sku") ?? "",
+  if (typeof document === "undefined") {
+    return result;
+  }
 
-    url.searchParams.get("skuId") ?? "",
+  for (const script of Array.from(document.scripts)) {
+    const text = script.textContent || "";
 
-    getMetaContent(["meta[name='sku']", "meta[property='product:retailer_item_id']"]),
+    if (!/price|jdPrice|sku/i.test(text)) {
+      continue;
+    }
 
-    findScriptValue(/["']?skuId["']?\s*[:=]\s*["']?(\d{5,})/i),
+    for (const skuId of skuIds) {
+      const price = findPriceNearSkuId(text, skuId);
+
+      if (price) {
+        result[skuId] = price;
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * 读取注入脚本缓存的京东网络响应
+ */
+function readJdNetworkCache() {
+  const records: UnknownRecord[] = [];
+
+  if (typeof localStorage === "undefined") {
+    return records;
+  }
+
+  const value = parseJsonLike(localStorage.getItem(PDD_AUTO_JD_NET_DATA_STORAGE_KEY));
+
+  for (const record of normalizeNetworkCacheRecords(value)) {
+    pushUniqueRecord(records, record);
+  }
+
+  return records;
+}
+
+/**
+ * 标准化网络缓存结构
+ */
+function normalizeNetworkCacheRecords(value: unknown) {
+  const records = Array.isArray(value) ? value : value ? [value] : [];
+  const normalized: UnknownRecord[] = [];
+
+  for (const item of records) {
+    const record = toRecord(item);
+
+    if (!record) {
+      continue;
+    }
+
+    const data = normalizeNetworkResponseData(record);
+
+    normalized.push({
+      ...record,
+      data,
+    });
+  }
+
+  return normalized;
+}
+
+/**
+ * 解析网络缓存中的 responseText/data
+ */
+function normalizeNetworkResponseData(record: UnknownRecord) {
+  const data = record.data ?? record.response ?? record.responseText;
+
+  if (typeof data === "string") {
+    return parseJsonLike(data);
+  }
+
+  return data;
+}
+
+/**
+ * 从页面全局对象收集京东商品相关状态
+ *
+ * 很多 SKU、价格、图片数据会挂在 window 全局对象中
+ */
+function collectJdPageStateRecords() {
+  const records: UnknownRecord[] = [];
+
+  if (typeof window === "undefined") {
+    return records;
+  }
+
+  const windowRecord = window as unknown as UnknownRecord;
+  const candidateKeys = [
+    "pageConfig",
+    "wareBusiness",
+    "wareInfo",
+    "wareInfoReadMap",
+    "colorSizeVO",
+    "mainImageVO",
+    "skuInfo",
+    "skuInfoMap",
+    "priceMap",
+    "imageList",
+    "__INITIAL_STATE__",
+    "__NEXT_DATA__",
+  ];
+
+  for (const key of candidateKeys) {
+    const record = toRecord(windowRecord[key]);
+
+    if (record) {
+      records.push(record);
+    }
+  }
+
+  return records;
+}
+
+/**
+ * 尝试解析 JSON、JSONP 或普通字符串
+ */
+function parseJsonLike(value: unknown): unknown {
+  const text = toText(value);
+
+  if (!text) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    const jsonpMatch = text.match(/^[\w$.]+\(([\s\S]*)\);?$/);
+
+    if (!jsonpMatch) {
+      return text;
+    }
+
+    try {
+      return JSON.parse(jsonpMatch[1]);
+    } catch {
+      return text;
+    }
+  }
+}
+
+/**
+ * 在脚本文本中查找 SKU 附近的价格字段
+ */
+function findPriceNearSkuId(text: string, skuId: string) {
+  const skuToken = escapeRegExp(skuId);
+  const patterns = [
+    new RegExp(
+      `["'](?:J_)?${skuToken}["']\\s*:\\s*\\{[^}]{0,400}?["'](?:p|price|jdPrice|salePrice)["']\\s*:\\s*["']?([0-9]+(?:\\.[0-9]+)?)`,
+      "i",
+    ),
+    new RegExp(
+      `["'](?:skuId|id|wareId)["']\\s*:\\s*["']?(?:J_)?${skuToken}["']?[^}]{0,400}?["'](?:p|price|jdPrice|salePrice)["']\\s*:\\s*["']?([0-9]+(?:\\.[0-9]+)?)`,
+      "i",
+    ),
+  ];
+
+  for (const pattern of patterns) {
+    const price = normalizePrice(pattern.exec(text)?.[1]);
+
+    if (price) {
+      return price;
+    }
+  }
+
+  return "";
+}
+
+/**
+ * 从对象或基础类型中读取价格
+ */
+function readPrice(value: unknown) {
+  if (typeof value === "string" || typeof value === "number") {
+    return normalizePrice(value);
+  }
+
+  const record = toRecord(value);
+
+  if (!record) {
+    return "";
+  }
+
+  return firstText([
+    normalizePrice(record.price),
+    normalizePrice(record.jdPrice),
+    normalizePrice(record.p),
+    normalizePrice(record.op),
+    normalizePrice(record.m),
+    normalizePrice(record.salePrice),
+    normalizePrice(record.currentPrice),
+    normalizePrice(record.wMaprice),
+    normalizePrice(record.discountPrice),
   ]);
 }
 
 /**
- * 从 DOM 获取价格
+ * 读取当前页面展示的价格，只能兜底当前选中 SKU
  */
-function getPriceFromDom() {
+function getCurrentDomPrice() {
+  if (typeof document === "undefined") {
+    return "";
+  }
+
   return normalizePrice(
-    getText([
-      ".summary-price .p-price .price",
-      ".summary-price .price",
-      ".p-price .price",
-      "#jd-price",
-      "[class*='summary-price'] [class*='price']",
+    firstText([
+      getTextBySelectors([".summary-price .p-price .price", ".summary-price .price", ".p-price .price", "#jd-price"]),
+      getTextBySelectors([
+        "[class*='summary-price'] [class*='price']",
+        "[class*='price'] strong",
+        "[class*='price'] .price",
+      ]),
     ]),
   );
 }
 
 /**
- * 从 DOM 获取商品主图
+ * 通过 selector 批量收集图片 URL
  */
-function getImageFromDom() {
-  return getImageSource(["#spec-img", "#preview img", ".jqzoom img", "[class*='preview'] img"]);
-}
+function collectImagesBySelectors(selectors: string[]) {
+  const images: string[] = [];
 
-/**
- * 获取分类面包屑
- */
-function getCategories() {
-  return (
-    Array.from(document.querySelectorAll<HTMLElement>("#crumb-wrap a, .crumb a, .breadcrumb a"))
-      .map((element) => normalizeText(element.innerText || element.textContent || ""))
+  if (typeof document === "undefined") {
+    return images;
+  }
 
-      // 去掉空值和“京东首页”
-      .filter((value) => value && value !== "京东首页")
-  );
-}
-
-/**
- * 从多个 selector 获取文本
- */
-function getText(selectors: string[]) {
   for (const selector of selectors) {
-    const element = document.querySelector<HTMLElement>(selector);
-
-    const value = normalizeText(element?.innerText || element?.textContent || "");
-
-    if (value) {
-      return value;
-    }
-  }
-
-  return "";
-}
-
-/**
- * 获取 meta content
- */
-function getMetaContent(selectors: string[]) {
-  for (const selector of selectors) {
-    const element = document.querySelector<HTMLMetaElement>(selector);
-
-    const value = normalizeText(element?.content || "");
-
-    if (value) {
-      return value;
-    }
-  }
-
-  return "";
-}
-
-/**
- * 获取图片 src
- *
- * 支持:
- * - src
- * - currentSrc
- * - lazy load
- */
-function getImageSource(selectors: string[]) {
-  for (const selector of selectors) {
-    const element = document.querySelector<HTMLImageElement>(selector);
-
-    const value = firstValue([
-      element?.currentSrc ?? "",
-      element?.src ?? "",
-      element?.getAttribute("data-origin") ?? "",
-      element?.getAttribute("data-lazy-img") ?? "",
-    ]);
-
-    if (value) {
-      return value;
-    }
-  }
-
-  return "";
-}
-
-/**
- * 在 script 中通过正则匹配字段
- *
- * 用于读取:
- * window.xxx = {}
- */
-function findScriptValue(pattern: RegExp) {
-  for (const script of document.scripts) {
-    const text = script.textContent || "";
-
-    const value = text.match(pattern)?.[1] ?? "";
-
-    if (value) {
-      return normalizeText(value);
-    }
-  }
-
-  return "";
-}
-
-/**
- * 读取页面 JSON-LD
- *
- * SEO 数据通常存在:
- * <script type="application/ld+json">
- */
-function readJsonLdProduct(doc: Document) {
-  for (const script of doc.querySelectorAll<HTMLScriptElement>('script[type="application/ld+json"]')) {
-    const text = script.textContent?.trim();
-
-    if (!text) {
-      continue;
-    }
-
-    try {
-      const parsed = JSON.parse(text) as unknown;
-
-      const product = findJsonLdProduct(parsed);
-
-      if (product) {
-        return product;
-      }
-    } catch {
-      continue;
-    }
-  }
-
-  return null;
-}
-
-/**
- * 深度查找 JSON-LD Product
- */
-function findJsonLdProduct(value: unknown): JsonLdRecord | null {
-  // 数组递归
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const product = findJsonLdProduct(item);
-
-      if (product) {
-        return product;
+    for (const element of Array.from(document.querySelectorAll<HTMLElement>(selector))) {
+      for (const image of collectImagesFromElement(element)) {
+        pushUnique(images, image);
       }
     }
   }
 
-  // 非对象
-  if (!isRecord(value)) {
-    return null;
-  }
-
-  /**
-   * 判断:
-   * @type === Product
-   */
-  if (jsonLdTypeIncludes(value["@type"], "Product")) {
-    return value;
-  }
-
-  /**
-   * 部分 JSON-LD 在 @graph 中
-   */
-  return findJsonLdProduct(value["@graph"]);
+  return images;
 }
 
 /**
- * 获取 JSON-LD 字符串字段
+ * 从单个元素的图片属性、子 img 和 background-image 中提取图片
  */
-function getJsonLdString(product: JsonLdRecord | null, key: string) {
-  const value = product?.[key];
+function collectImagesFromElement(element: HTMLElement) {
+  const images: string[] = [];
 
-  return typeof value === "string" ? normalizeText(value) : "";
+  if (element instanceof HTMLImageElement) {
+    pushUnique(images, normalizeImageUrl(element.currentSrc));
+  }
+
+  for (const attr of IMAGE_SOURCE_ATTRIBUTES) {
+    pushUnique(images, normalizeImageUrl(element.getAttribute(attr)));
+  }
+
+  for (const image of Array.from(element.querySelectorAll("img"))) {
+    pushUnique(images, normalizeImageUrl(image.currentSrc || image.src));
+
+    for (const attr of IMAGE_SOURCE_ATTRIBUTES) {
+      pushUnique(images, normalizeImageUrl(image.getAttribute(attr)));
+    }
+  }
+
+  for (const image of extractImagesFromStyle(element.getAttribute("style") || element.style.backgroundImage)) {
+    pushUnique(images, image);
+  }
+
+  return images.filter(isLikelyProductImage);
 }
 
 /**
- * 获取 JSON-LD 图片
+ * 从页面全局对象中的图片列表补图
  */
-function getJsonLdImage(product: JsonLdRecord | null) {
-  const value = product?.image;
+function collectImagesFromPageState(keys: string[]) {
+  const images: string[] = [];
 
-  if (typeof value === "string") {
-    return value;
+  for (const record of collectJdPageStateRecords()) {
+    walkRecord(record, (item) => {
+      for (const key of keys) {
+        const value = item[key];
+
+        if (Array.isArray(value)) {
+          for (const imageItem of value) {
+            const imageRecord = toRecord(imageItem);
+            const image = imageRecord
+              ? firstImageUrl(
+                  imageRecord,
+                  ["imageUrl", "fullImageUrl", "imgUrl", "url", "src", "path"],
+                  JD_MAIN_IMAGE_PREFIX,
+                )
+              : normalizeImageUrl(imageItem, JD_MAIN_IMAGE_PREFIX);
+
+            pushUnique(images, image);
+          }
+        }
+      }
+    });
   }
 
-  // image: []
-  if (Array.isArray(value) && typeof value[0] === "string") {
-    return value[0];
-  }
-
-  return "";
+  return images.filter(isLikelyProductImage);
 }
 
 /**
- * 获取 JSON-LD 价格
+ * 从页面全局对象中补充 SKU 图
  */
-function getJsonLdPrice(product: JsonLdRecord | null) {
-  const offers = product?.offers;
+function collectSkuImagesFromPageState() {
+  const skuImages: Record<string, string> = {};
 
-  // offers: []
-  if (Array.isArray(offers)) {
-    return getOfferPrice(offers[0]);
+  for (const record of collectJdPageStateRecords()) {
+    walkRecord(record, (item) => {
+      const skuText = firstText([item.text, item.name, item.title, item.skuName, item.color]);
+      const image = firstImageUrl(item, ["fullImageUrl", "imageUrl", "imgUrl", "url", "src"], JD_SKU_IMAGE_PREFIX);
+
+      if (skuText && image) {
+        skuImages[skuText] = image;
+      }
+    });
   }
 
-  return getOfferPrice(offers);
+  return skuImages;
 }
 
 /**
- * 获取 Offer price
+ * 提取 style 中的 url(...)
  */
-function getOfferPrice(offer: unknown) {
-  if (!isRecord(offer)) {
+function extractImagesFromStyle(styleText: string) {
+  const images: string[] = [];
+  const regexp = /url\((['"]?)(.*?)\1\)/gi;
+  let match = regexp.exec(styleText);
+
+  while (match) {
+    pushUnique(images, normalizeImageUrl(match[2]));
+    match = regexp.exec(styleText);
+  }
+
+  return images;
+}
+
+/**
+ * 读取对象里的第一个图片字段
+ */
+function firstImageUrl(record: unknown, keys: string[], prefix: string) {
+  const source = toRecord(record);
+
+  if (!source) {
     return "";
   }
 
-  const value = offer.price ?? offer.lowPrice;
+  for (const key of keys) {
+    const image = normalizeImageUrl(source[key], prefix);
 
-  return normalizePrice(typeof value === "number" ? String(value) : typeof value === "string" ? value : "");
-}
-
-/**
- * 判断 @type 是否包含目标类型
- */
-function jsonLdTypeIncludes(value: unknown, expected: string): boolean {
-  if (typeof value === "string") {
-    return value.toLowerCase() === expected.toLowerCase();
+    if (image) {
+      return image;
+    }
   }
 
-  return Array.isArray(value) && value.some((item) => jsonLdTypeIncludes(item, expected));
+  return "";
 }
 
 /**
- * 清理页面 title
+ * 标准化京东图片 URL，兼容 //、jfs 相对路径和普通相对路径
  */
-function cleanupTitle(value: string) {
-  return normalizeText(
-    value
-      .replace(/【.*?】-京东$/u, "")
-      .replace(/-京东JD\.COM.*$/u, "")
-      .replace(/京东.*$/u, ""),
+function normalizeImageUrl(value: unknown, prefix = "") {
+  const source = cleanupImageSource(toText(value).replace(/\\\//g, "/"));
+
+  if (!source || source.startsWith("data:") || source === "none") {
+    return "";
+  }
+
+  if (/^https?:\/\//i.test(source)) {
+    return source;
+  }
+
+  if (source.startsWith("//")) {
+    return `https:${source}`;
+  }
+
+  if (/^[\w.-]+\.360buyimg\.com\//i.test(source)) {
+    return `https://${source}`;
+  }
+
+  if (prefix) {
+    return `${prefix}${source.replace(/^\/+/, "")}`;
+  }
+
+  try {
+    return new URL(source, window.location.href).href;
+  } catch {
+    return source;
+  }
+}
+
+/**
+ * 清理图片字段中混入的 style、空白和引号等无关内容
+ */
+function cleanupImageSource(value: string) {
+  const source = value.trim().replace(/^['"]|['"]$/g, "");
+  const imageMatch = source.match(/^(.*?\.(?:jpg|jpeg|png|webp|avif))(?:[?!][^\s"'<>]*)?/i);
+
+  if (!imageMatch) {
+    return source;
+  }
+
+  return imageMatch[0];
+}
+
+/**
+ * 判断图片是否像商品图，过滤空图、base64 和明显非图片地址
+ */
+function isLikelyProductImage(value: string) {
+  return (
+    Boolean(value) &&
+    !value.startsWith("data:") &&
+    (/360buyimg\.com/i.test(value) || /\.(jpg|jpeg|png|webp|avif)(?:[?#!].*)?$/i.test(value))
   );
+}
+
+/**
+ * 获取最终 SKU 列表
+ */
+function getResultSkuIds(parseData: IParseData) {
+  if (parseData.SKUKeyList.length > 0) {
+    return parseData.SKUKeyList;
+  }
+
+  return parseData.goodsId ? [parseData.goodsId] : [];
+}
+
+/**
+ * 从当前 URL 提取京东 skuId
+ */
+function getSkuIdFromUrl() {
+  if (typeof window === "undefined") {
+    return "";
+  }
+
+  try {
+    const url = new URL(window.location.href);
+
+    return firstText([
+      url.pathname.match(/\/(?:product\/)?(\d+)\.html/i)?.[1],
+      url.searchParams.get("sku"),
+      url.searchParams.get("skuId"),
+    ]);
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * 获取当前页面链接
+ */
+function getCurrentPageUrl() {
+  return typeof window === "undefined" ? "" : window.location.href;
+}
+
+/**
+ * 从页面标题区域读取商品名兜底
+ */
+function getTitleFromPage() {
+  return getTextBySelectors(["#name h1", ".sku-name", "[class*='sku-name']", "h1"])
+    .replace(/-京东.*$/u, "")
+    .trim();
+}
+
+/**
+ * 从多个 selector 中读取第一个文本
+ */
+function getTextBySelectors(selectors: string[]) {
+  if (typeof document === "undefined") {
+    return "";
+  }
+
+  for (const selector of selectors) {
+    const element = document.querySelector<HTMLElement>(selector);
+    const text = normalizeText(element?.innerText || element?.textContent || "");
+
+    if (text) {
+      return text;
+    }
+  }
+
+  return "";
+}
+
+/**
+ * 将接口中的分类、面包屑等结构转成字符串数组
+ */
+function toTextList(value: unknown) {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => {
+        const record = toRecord(item);
+
+        return firstText([record?.text, record?.name, item]);
+      })
+      .filter(Boolean);
+  }
+
+  const text = toText(value);
+
+  return text ? [text] : [];
+}
+
+/**
+ * 递归遍历对象，给 SKUInfo 和 SKUPrice 做弱结构兜底
+ */
+function walkRecord(value: unknown, visitor: (record: UnknownRecord) => void, seen = new WeakSet<object>(), depth = 0) {
+  if (depth > 8 || typeof value !== "object" || value === null || seen.has(value)) {
+    return;
+  }
+
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      walkRecord(item, visitor, seen, depth + 1);
+    }
+
+    return;
+  }
+
+  visitor(value as UnknownRecord);
+
+  for (const nextValue of Object.values(value as UnknownRecord)) {
+    walkRecord(nextValue, visitor, seen, depth + 1);
+  }
+}
+
+/**
+ * 从字符串里提取 skuId
+ */
+function extractSkuIdsFromText(value: unknown) {
+  return Array.from(new Set(toText(value).match(/\d{5,}/g) ?? []));
+}
+
+/**
+ * 标准化 skuId，兼容 J_123456 形式
+ */
+function normalizeSkuId(value: unknown) {
+  return toText(value).replace(/^J_/i, "");
+}
+
+/**
+ * 标准化价格，结果保持为纯数字字符串
+ */
+function normalizePrice(value: unknown) {
+  const match = toText(value)
+    .replace(/,/g, "")
+    .match(/(?:¥|￥)?\s*([0-9]+(?:\.[0-9]+)?)/u);
+
+  return match?.[1] ?? "";
+}
+
+/**
+ * 获取第一个有效文本
+ */
+function firstText(values: unknown[]) {
+  for (const value of values) {
+    const text = toText(value);
+
+    if (text) {
+      return text;
+    }
+  }
+
+  return "";
 }
 
 /**
@@ -543,104 +1073,90 @@ function normalizeText(value: string) {
 }
 
 /**
- * 价格标准化
- *
- * 统一:
- * ¥123.00
+ * unknown 转字符串
  */
-function normalizePrice(value: string) {
-  const match = normalizeText(value)
-    .replace(/,/g, "")
-    .match(/(?:¥|￥)?\s*([0-9]+(?:\.[0-9]+)?)/u);
-
-  return match ? `¥${match[1]}` : "";
-}
-
-/**
- * URL 标准化
- *
- * 支持:
- * //img.jpg
- */
-function normalizeUrl(value: string) {
-  const source = normalizeText(value);
-
-  if (!source) {
-    return "";
+function toText(value: unknown) {
+  if (typeof value === "string") {
+    return normalizeText(value);
   }
 
-  try {
-    return new URL(source.startsWith("//") ? `${window.location.protocol}${source}` : source, window.location.href)
-      .href;
-  } catch {
-    return source;
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+
+  return "";
+}
+
+/**
+ * unknown 转对象
+ */
+function toRecord(value: unknown): UnknownRecord | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as UnknownRecord) : null;
+}
+
+/**
+ * unknown 转数组
+ */
+function toArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+/**
+ * 获取第一个数组
+ */
+function firstArray(values: unknown[]) {
+  for (const value of values) {
+    if (Array.isArray(value)) {
+      return value;
+    }
+  }
+
+  return [];
+}
+
+/**
+ * 向数组追加非空且不重复的值
+ */
+function pushUnique(target: string[], value: string) {
+  if (value && !target.includes(value)) {
+    target.push(value);
   }
 }
 
 /**
- * 获取第一个有效值
+ * 向对象数组追加不重复的记录
  */
-function firstValue(values: Array<string | null | undefined>) {
-  return values.find((value) => Boolean(value?.trim()))?.trim() ?? "";
-}
-
-/**
- * 判断是否为 object
- */
-function isRecord(value: unknown): value is JsonLdRecord {
-  return typeof value === "object" && value !== null;
-}
-
-/**
- * 保存商品到 chrome.storage.local
- */
-async function saveCollectedProduct(product: JdProduct) {
-  /**
-   * 检查 storage 权限
-   */
-  if (typeof chrome === "undefined" || !chrome.storage?.local) {
-    throw new Error("扩展存储不可用，请确认 manifest 已开启 storage 权限");
-  }
-
-  /**
-   * 获取已有商品
-   */
-  const result = await chrome.storage.local.get(STORAGE_KEY);
-
-  const storedProducts = result[STORAGE_KEY] as unknown;
-
-  /**
-   * 过滤非法数据
-   */
-  const products = Array.isArray(storedProducts) ? storedProducts.filter(isJdProduct) : [];
-
-  /**
-   * 去重:
-   * 相同 skuId 只保留最新
-   */
-  const nextProducts = [
-    product,
-
-    ...products.filter((item) => item.skuId !== product.skuId || item.platform !== product.platform),
-  ].slice(0, MAX_STORED_PRODUCTS);
-
-  /**
-   * 保存
-   */
-  await chrome.storage.local.set({
-    [STORAGE_KEY]: nextProducts,
+function pushUniqueRecord(target: UnknownRecord[], value: UnknownRecord) {
+  const signature = JSON.stringify({
+    kind: value.kind,
+    url: value.url,
+    capturedAt: value.capturedAt,
   });
+
+  if (
+    !target.some(
+      (item) => JSON.stringify({ kind: item.kind, url: item.url, capturedAt: item.capturedAt }) === signature,
+    )
+  ) {
+    target.push(value);
+  }
 }
 
 /**
- * 判断是否为合法商品结构
+ * 追加 SKU 图片并去重
  */
-function isJdProduct(value: unknown): value is JdProduct {
-  return (
-    isRecord(value) &&
-    value.platform === "jd" &&
-    typeof value.skuId === "string" &&
-    typeof value.title === "string" &&
-    typeof value.url === "string"
-  );
+function appendSkuImage(target: Record<string, string[]>, skuText: string, image: string) {
+  if (!skuText || !image) {
+    return;
+  }
+
+  target[skuText] ??= [];
+  pushUnique(target[skuText], image);
+}
+
+/**
+ * 转义动态正则内容
+ */
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

@@ -42,6 +42,7 @@ export type JdDetailWareBusinessMessage = {
   payload: CapturedJdResponse;
 };
 
+// {"升降方式": "气压升降"}
 export interface IBaseAttr {
   [key: string]: string | undefined;
 }
@@ -54,15 +55,15 @@ export interface ISkuTitle {
 export interface IParseData {
   baseAttr: IBaseAttr; // 商品属性
   batchMoving: boolean;
-  category: string; // 分类
-  detailImg: string[]; // 商品详情页图片
+  category: string; // 分类 "家具-椅类-电脑椅"
+  detailImg: string[]; // 商品详情页图片 ['','']
   goodsId: string; // 商品id
   goodsUrl: string; // 商品详情页url
-  jdSKUImg: Record<string, string[]>; // sku
-  mainImg: string[]; // 轮播图主图
+  jdSKUImg: Record<string, string[]>; // sku {'棕色': ['','']}
+  mainImg: string[]; // 轮播图主图 ['','']
   platform: string; // 平台
   platformEnum: string; // 平台
-  SKUImg: Record<string, string>; // sku数组
+  SKUImg: Record<string, string>; // sku数组 {"棕色": ''}
   SKUInfo: Record<string, { titleList: ISkuTitle }>; // sku信息
   SKUKey: Record<string, string[]>; // sku key
   SKUKeyList: string[]; // sku 数组
