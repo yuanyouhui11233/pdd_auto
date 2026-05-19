@@ -19,7 +19,7 @@ export default defineManifest({
   content_scripts: [
     {
       js: ["src/content/views/inject.ts"],
-      matches: ["https://*.jd.com/*"],
+      matches: ["https://*.jd.com/*", "https://mms.pinduoduo.com/*"],
       run_at: "document_start",
       world: "MAIN",
     },

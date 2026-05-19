@@ -53,6 +53,146 @@ const JD_SUPPLEMENT_REQUEST_PATTERNS = [
  */
 const JSONP_CALLBACK_PARAMS = ["callback", "jsonp", "jsoncallback", "jsonpcallback", "callbackName"];
 /**
+ * 判断当前页面是否为拼多多商家后台
+ */
+function isPddMerchantPage() {
+    return window.location.hostname === "mms.pinduoduo.com";
+}
+/**
+ * 安装拼多多图片上传签名调试 Hook
+ *
+ * 用于定位 upload_sign 是由哪段页面代码写入 FormData 的
+ */
+function installPddUploadSignDebugHook() {
+    if (!isPddMerchantPage() || window.__pddAutoUploadSignDebugHookInstalled) {
+        return;
+    }
+
+    window.__pddAutoUploadSignDebugHookInstalled = true;
+
+    const originalFormDataAppend = FormData.prototype.append;
+    const originalFetchForPddUpload = window.fetch;
+    const originalXhrOpenForPddUpload = XMLHttpRequest.prototype.open;
+    const originalXhrSendForPddUpload = XMLHttpRequest.prototype.send;
+    const xhrUploadRequestMap = new WeakMap();
+
+    /**
+     * 记录 FormData.append 写入图片上传字段的调用栈
+     */
+    FormData.prototype.append = function (name, value, filename) {
+        if (name === "upload_sign" || name === "image" || name === "pic_operations") {
+            console.group(`[pdd_auto] 捕获到拼多多 FormData 字段: ${name}`);
+            if (value instanceof File) {
+                console.log("file:", {
+                    name: value.name,
+                    size: value.size,
+                    type: value.type,
+                    filename,
+                });
+            } else {
+                console.log(`${name}:`, value);
+            }
+            console.trace(`[pdd_auto] ${name} append 调用栈`);
+            console.groupEnd();
+        }
+
+        return originalFormDataAppend.apply(this, arguments);
+    };
+
+    /**
+     * 打印 store_image 请求里的 FormData 字段
+     */
+    function debugPddStoreImageRequest(source, url, body) {
+        if (!(body instanceof FormData)) {
+            return;
+        }
+
+        const fields = {};
+
+        body.forEach((value, key) => {
+            fields[key] =
+                value instanceof File
+                    ? {
+                          name: value.name,
+                          size: value.size,
+                          type: value.type,
+                      }
+                    : value;
+        });
+
+        const isStoreImageRequest = String(url).includes("file.pinduoduo.com/v3/store_image");
+        const hasUploadSign = Object.prototype.hasOwnProperty.call(fields, "upload_sign");
+
+        if (!isStoreImageRequest && !hasUploadSign) {
+            return;
+        }
+
+        console.group(`[pdd_auto] 捕获到拼多多图片上传请求: ${source}`);
+        console.log("url:", url);
+        console.log("isStoreImageRequest:", isStoreImageRequest);
+        console.log("formData:", fields);
+        console.trace("[pdd_auto] store_image 请求调用栈");
+        console.groupEnd();
+    }
+
+    /**
+     * 打印 store_image 响应，判断图片是否真正上传成功
+     */
+    function debugPddStoreImageResponse(source, url, responseText, status) {
+        if (!String(url).includes("file.pinduoduo.com/v3/store_image")) {
+            return;
+        }
+
+        console.group(`[pdd_auto] 拼多多图片上传响应: ${source}`);
+        console.log("status:", status);
+        console.log("url:", url);
+        console.log("responseText:", responseText);
+        console.groupEnd();
+    }
+
+    window.fetch = function (input, init) {
+        const url = getFetchUrl(input);
+        debugPddStoreImageRequest("fetch", url, init?.body);
+        return originalFetchForPddUpload.apply(this, arguments).then((response) => {
+            try {
+                response.clone().text().then((text) => {
+                    debugPddStoreImageResponse("fetch", response.url || url, text, response.status);
+                });
+            } catch {}
+
+            return response;
+        });
+    };
+
+    XMLHttpRequest.prototype.open = function (method, url) {
+        xhrUploadRequestMap.set(this, {
+            method,
+            url: String(url),
+        });
+
+        return originalXhrOpenForPddUpload.apply(this, arguments);
+    };
+
+    XMLHttpRequest.prototype.send = function (body) {
+        const request = xhrUploadRequestMap.get(this);
+
+        if (request) {
+            debugPddStoreImageRequest("xhr", request.url, body);
+        }
+
+        this.addEventListener("load", function () {
+            try {
+                const responseText = typeof this.responseText === "string" ? this.responseText : "";
+                debugPddStoreImageResponse("xhr", request?.url ?? "", responseText, this.status);
+            } catch {}
+        });
+
+        return originalXhrSendForPddUpload.apply(this, arguments);
+    };
+
+    console.log("[pdd_auto] 已开始监听拼多多图片上传 upload_sign");
+}
+/**
  * 判断是否为目标京东商品详情接口
  */
 function shouldCaptureJdDetailRequest(method, url) {
@@ -561,4 +701,5 @@ Node.prototype.insertBefore = function (node, child) {
     handlePossibleScriptNode(node);
     return originalInsertBefore.call(this, node, child);
 };
+installPddUploadSignDebugHook();
 console.log("[pdd_auto] 已开始监听京东商品详情接口:", JD_DETAIL_FUNCTION_ID);
