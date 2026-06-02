@@ -59,5 +59,7 @@ export function isCachedParsedProduct(value: unknown): value is CachedParsedProd
 
   const record = value as Partial<CachedParsedProduct>;
 
-  return Boolean(record.data && typeof record.cachedAt === "string" && typeof record.sourceUrl === "string");
+  return Boolean(
+    record.data && typeof record.cachedAt === "string" && typeof record.sourceUrl === "string",
+  );
 }

@@ -1,5 +1,12 @@
 import Logo from "@/assets/crx.svg";
-import { CheckCircle2, ClipboardPenLine, GripHorizontal, Loader2, ShoppingBag, XCircle } from "lucide-react";
+import {
+  CheckCircle2,
+  ClipboardPenLine,
+  GripHorizontal,
+  Loader2,
+  ShoppingBag,
+  XCircle,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { parserDataByJD } from "../collectors/jdProduct";
 import { getParsedProductFromCache, saveParsedProductToCache } from "../storage/parsedProduct";
@@ -70,8 +77,16 @@ function App({ getLatestJdDetailResponse }: AppProps) {
       const height = rect?.height ?? 160;
 
       setPosition({
-        x: clamp(event.clientX - dragState.offsetX, EDGE_PADDING, window.innerWidth - width - EDGE_PADDING),
-        y: clamp(event.clientY - dragState.offsetY, EDGE_PADDING, window.innerHeight - height - EDGE_PADDING),
+        x: clamp(
+          event.clientX - dragState.offsetX,
+          EDGE_PADDING,
+          window.innerWidth - width - EDGE_PADDING,
+        ),
+        y: clamp(
+          event.clientY - dragState.offsetY,
+          EDGE_PADDING,
+          window.innerHeight - height - EDGE_PADDING,
+        ),
       });
     };
 
@@ -151,11 +166,13 @@ function App({ getLatestJdDetailResponse }: AppProps) {
     <div
       ref={containerRef}
       className="fixed left-0 top-0 z-[2147483647] flex items-start gap-3"
-      style={{ transform: `translate(${position.x}px, ${position.y}px)` }}>
+      style={{ transform: `translate(${position.x}px, ${position.y}px)` }}
+    >
       <button
         className="flex h-[35px] w-[35px] cursor-pointer items-center justify-center rounded-full border-0 bg-[#288cd7] p-0 shadow transition-colors hover:bg-[#1e6aa3]"
         onClick={() => setShow((value) => !value)}
-        type="button">
+        type="button"
+      >
         <img src={Logo} alt="CRXJS logo" className="h-7 w-7 p-1" />
       </button>
 
@@ -173,7 +190,8 @@ function App({ getLatestJdDetailResponse }: AppProps) {
                 offsetX: event.clientX - position.x,
                 offsetY: event.clientY - position.y,
               });
-            }}>
+            }}
+          >
             <GripHorizontal className="h-4 w-4 text-slate-400" />
             <span>菜单</span>
           </div>
@@ -188,7 +206,8 @@ function App({ getLatestJdDetailResponse }: AppProps) {
                   disabled={item.action === "collectProduct" && isCollecting}
                   key={item.label}
                   onClick={() => void handleMenuAction(item.action)}
-                  type="button">
+                  type="button"
+                >
                   <Icon
                     className={`h-4 w-4 text-[#288cd7] ${item.action === "collectProduct" && isCollecting ? "animate-spin" : ""}`}
                   />
@@ -206,7 +225,8 @@ function App({ getLatestJdDetailResponse }: AppProps) {
                   : collectStatus.type === "error"
                     ? "bg-red-50 text-red-700"
                     : "bg-slate-100 text-slate-600"
-              }`}>
+              }`}
+            >
               {collectStatus.type === "success" ? (
                 <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               ) : (

@@ -110,7 +110,10 @@ async function renderAutoFillPanel(parent: HTMLElement) {
 
   createRoot(mount).render(
     <StrictMode>
-      <AutoFillPanel cachedProduct={cachedProduct} onStartFill={() => autoFillPddGoods(cachedProduct?.data)} />
+      <AutoFillPanel
+        cachedProduct={cachedProduct}
+        onStartFill={() => autoFillPddGoods(cachedProduct?.data)}
+      />
     </StrictMode>,
   );
 }
@@ -158,7 +161,9 @@ async function fillPddCategoryInput(category: string | undefined) {
   // 使用原生 value setter 写入，确保 React/Vue 等受控输入能监听到值变化
   input.focus();
   setNativeInputValue(input, categoryText);
-  input.dispatchEvent(new InputEvent("input", { bubbles: true, data: categoryText, inputType: "insertText" }));
+  input.dispatchEvent(
+    new InputEvent("input", { bubbles: true, data: categoryText, inputType: "insertText" }),
+  );
   input.dispatchEvent(new Event("change", { bubbles: true }));
   input.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: "Enter" }));
 }
@@ -269,7 +274,9 @@ async function uploadCollectedDetailImagesByFileInput(parseData: IParseData) {
  * 批量下载并转码图片，单张失败不影响其它图片继续上传
  */
 async function createImageFilesFromUrls(imageUrls: string[]) {
-  const results = await Promise.allSettled(imageUrls.map((imageUrl, index) => createImageFileFromUrl(imageUrl, index)));
+  const results = await Promise.allSettled(
+    imageUrls.map((imageUrl, index) => createImageFileFromUrl(imageUrl, index)),
+  );
   const files: File[] = [];
 
   results.forEach((result, index) => {
@@ -470,7 +477,9 @@ function fillPddGoodsTitle(title: string) {
 
   input.focus();
   setNativeInputValue(input, titleText);
-  input.dispatchEvent(new InputEvent("input", { bubbles: true, data: titleText, inputType: "insertText" }));
+  input.dispatchEvent(
+    new InputEvent("input", { bubbles: true, data: titleText, inputType: "insertText" }),
+  );
   input.dispatchEvent(new Event("change", { bubbles: true }));
   input.blur();
 }
@@ -480,8 +489,9 @@ function fillPddGoodsTitle(title: string) {
  */
 function findPddTitleInput() {
   return (
-    document.querySelector<HTMLInputElement>("input[data-tracking-click-viewid='title_input_area']") ??
-    document.querySelector<HTMLInputElement>("input[placeholder*='商品标题组成']")
+    document.querySelector<HTMLInputElement>(
+      "input[data-tracking-click-viewid='title_input_area']",
+    ) ?? document.querySelector<HTMLInputElement>("input[placeholder*='商品标题组成']")
   );
 }
 
@@ -489,7 +499,9 @@ function findPddTitleInput() {
  * 添加前两个 SKU 规格类型，并分别填写对应规格值
  */
 async function fillPddSkuTypes(parseData: IParseData) {
-  const skuDimensions = parseData.SKUSort.map((item) => item.trim()).filter(Boolean).slice(0, 2);
+  const skuDimensions = parseData.SKUSort.map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 2);
 
   if (skuDimensions.length === 0) {
     console.warn("[pdd_auto] 采集数据中没有可填写的 SKU 规格类型");
@@ -604,7 +616,9 @@ function waitForNextEmptySkuValueInput(specRow: HTMLElement, timeout = 5000) {
  * 获取当前页面所有规格行
  */
 function getPddSpecRows() {
-  return Array.from(document.querySelectorAll<HTMLElement>(".goods-sku-box.goods-spec .goods-spec-row"));
+  return Array.from(
+    document.querySelectorAll<HTMLElement>(".goods-sku-box.goods-spec .goods-spec-row"),
+  );
 }
 
 /**
@@ -627,16 +641,15 @@ function findPddAddSkuTypeButton() {
  * 等待新增规格类型后的下拉输入框
  */
 function waitForPddSkuTypeSelectInput(specRow: HTMLElement, timeout = 5000) {
-  return waitForElement<HTMLInputElement>(
-    () => {
-      const inputs = Array.from(
-        specRow.querySelectorAll<HTMLInputElement>("input[data-testid='beast-core-select-htmlInput']"),
-      );
+  return waitForElement<HTMLInputElement>(() => {
+    const inputs = Array.from(
+      specRow.querySelectorAll<HTMLInputElement>(
+        "input[data-testid='beast-core-select-htmlInput']",
+      ),
+    );
 
-      return inputs.find((input) => input.placeholder.includes("规格类型") && !input.value) ?? null;
-    },
-    timeout,
-  );
+    return inputs.find((input) => input.placeholder.includes("规格类型") && !input.value) ?? null;
+  }, timeout);
 }
 
 /**
@@ -645,7 +658,9 @@ function waitForPddSkuTypeSelectInput(specRow: HTMLElement, timeout = 5000) {
 function waitForPddSkuTypeOption(skuType: string, timeout = 5000) {
   return waitForElement<HTMLElement>(
     () =>
-      Array.from(document.querySelectorAll<HTMLElement>("ul[role='listbox'] li[role='option']")).find(
+      Array.from(
+        document.querySelectorAll<HTMLElement>("ul[role='listbox'] li[role='option']"),
+      ).find(
         (option) => normalizeText(option.textContent || "").replace(/常用$/gu, "") === skuType,
       ) ?? null,
     timeout,
@@ -656,8 +671,12 @@ function waitForPddSkuTypeOption(skuType: string, timeout = 5000) {
  * 模拟真实点击，触发拼多多 Beast 组件内部事件
  */
 function clickElement(element: HTMLElement) {
-  element.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
-  element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
+  element.dispatchEvent(
+    new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }),
+  );
+  element.dispatchEvent(
+    new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }),
+  );
   element.click();
 }
 
@@ -667,7 +686,9 @@ function clickElement(element: HTMLElement) {
 function setPddTextInputValue(input: HTMLInputElement, value: string) {
   input.focus();
   setNativeInputValue(input, value);
-  input.dispatchEvent(new InputEvent("input", { bubbles: true, data: value, inputType: "insertText" }));
+  input.dispatchEvent(
+    new InputEvent("input", { bubbles: true, data: value, inputType: "insertText" }),
+  );
   input.dispatchEvent(new Event("change", { bubbles: true }));
   input.blur();
 }
@@ -768,7 +789,9 @@ function findPddCategoryInput() {
     return directInput;
   }
 
-  const wrapperInput = document.querySelector<HTMLElement>(".IPT_input_5-188-0")?.querySelector<HTMLInputElement>("input");
+  const wrapperInput = document
+    .querySelector<HTMLElement>(".IPT_input_5-188-0")
+    ?.querySelector<HTMLInputElement>("input");
 
   if (wrapperInput) {
     return wrapperInput;
@@ -784,7 +807,10 @@ function findPddCategoryInput() {
  */
 function setNativeInputValue(input: HTMLInputElement, value: string) {
   const valueSetter = Object.getOwnPropertyDescriptor(input, "value")?.set;
-  const prototypeValueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  const prototypeValueSetter = Object.getOwnPropertyDescriptor(
+    HTMLInputElement.prototype,
+    "value",
+  )?.set;
 
   if (prototypeValueSetter && valueSetter !== prototypeValueSetter) {
     prototypeValueSetter.call(input, value);
@@ -798,14 +824,20 @@ function setNativeInputValue(input: HTMLInputElement, value: string) {
  * 判断当前页面是否为拼多多商品发布类目页
  */
 function isPddGoodsCategoryPage() {
-  return window.location.hostname === PDD_MERCHANT_HOST && window.location.pathname.startsWith(PDD_GOODS_CATEGORY_PATH);
+  return (
+    window.location.hostname === PDD_MERCHANT_HOST &&
+    window.location.pathname.startsWith(PDD_GOODS_CATEGORY_PATH)
+  );
 }
 
 /**
  * 判断当前页面是否为拼多多商品新增编辑页
  */
 function isPddGoodsAddPage() {
-  return window.location.hostname === PDD_MERCHANT_HOST && window.location.pathname.startsWith(PDD_GOODS_ADD_PATH);
+  return (
+    window.location.hostname === PDD_MERCHANT_HOST &&
+    window.location.pathname.startsWith(PDD_GOODS_ADD_PATH)
+  );
 }
 
 /**
@@ -903,7 +935,11 @@ async function autoUploadMainImagesOnGoodsAddPage() {
       ].join("::")
     : "";
 
-  if (!parseData || imageUrls.length === 0 || pddGoodsAddAutoUploadedSignature === uploadSignature) {
+  if (
+    !parseData ||
+    imageUrls.length === 0 ||
+    pddGoodsAddAutoUploadedSignature === uploadSignature
+  ) {
     return;
   }
 

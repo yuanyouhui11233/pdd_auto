@@ -62,7 +62,8 @@ function AutoFillPanel({ cachedProduct, onStartFill }: AutoFillPanelProps) {
           className="h-8 shrink-0 rounded-md border border-[#288cd7] bg-[#288cd7] px-3 text-xs font-medium text-white disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
           disabled={!parseData || isFilling || !onStartFill}
           onClick={() => void handleStartFill()}
-          type="button">
+          type="button"
+        >
           {isFilling ? "填写中" : "开始填写"}
         </button>
       </div>
@@ -81,7 +82,9 @@ function AutoFillPanel({ cachedProduct, onStartFill }: AutoFillPanelProps) {
       )}
 
       {fillStatus && (
-        <div className={`mt-2 text-xs ${fillStatus.type === "success" ? "text-emerald-600" : "text-red-600"}`}>
+        <div
+          className={`mt-2 text-xs ${fillStatus.type === "success" ? "text-emerald-600" : "text-red-600"}`}
+        >
           {fillStatus.message}
         </div>
       )}

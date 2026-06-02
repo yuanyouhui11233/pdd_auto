@@ -43,7 +43,14 @@ const PDD_AUTO_JD_NET_DATA_STORAGE_KEY = "pdd_auto_jd_net_data";
 /**
  * 页面图片常见的懒加载属性
  */
-const IMAGE_SOURCE_ATTRIBUTES = ["src", "data-src", "data-original", "data-lazy-img", "data-lazyload", "data-url"];
+const IMAGE_SOURCE_ATTRIBUTES = [
+  "src",
+  "data-src",
+  "data-original",
+  "data-lazy-img",
+  "data-lazyload",
+  "data-url",
+];
 
 /**
  * 处理 pc_detailpage_wareBusiness 京东商品详情接口响应
@@ -106,7 +113,10 @@ function createEmptyParseData(): IParseData {
  */
 function parseBaseAttributes(parseData: IParseData, source: UnknownRecord) {
   const productAttributeVO = toRecord(source.productAttributeVO);
-  const attributes = [...toArray(productAttributeVO?.attributes), ...toArray(productAttributeVO?.coreAttributes)];
+  const attributes = [
+    ...toArray(productAttributeVO?.attributes),
+    ...toArray(productAttributeVO?.coreAttributes),
+  ];
 
   for (const item of attributes) {
     const attribute = toRecord(item) as JdAttribute | null;
@@ -172,12 +182,22 @@ function parseMainImages(parseData: IParseData, source: UnknownRecord) {
   }
 
   // 部分页面接口没有返回完整主图列表，直接读取页面缩略图作为补充
-  for (const image of collectImagesBySelectors(["#spec-list img", "#preview img", "#spec-img", ".spec-list img"])) {
+  for (const image of collectImagesBySelectors([
+    "#spec-list img",
+    "#preview img",
+    "#spec-img",
+    ".spec-list img",
+  ])) {
     pushUnique(parseData.mainImg, image);
   }
 
   // 页面全局对象里有时会保留完整图片列表
-  for (const image of collectImagesFromPageState(["mainImageVO", "imageList", "imageListData", "wareImage"])) {
+  for (const image of collectImagesFromPageState([
+    "mainImageVO",
+    "imageList",
+    "imageListData",
+    "wareImage",
+  ])) {
     pushUnique(parseData.mainImg, image);
   }
 }
@@ -199,7 +219,11 @@ function parseSkuData(parseData: IParseData, source: UnknownRecord) {
       const button = toRecord(buttonItem) as JdSkuButton | null;
       const skuText = firstText([button?.text, button?.name, button?.title]);
       const skuIds = getSkuIdsFromButton(button);
-      const skuImage = firstImageUrl(button, ["fullImageUrl", "imageUrl", "imgUrl"], JD_SKU_IMAGE_PREFIX);
+      const skuImage = firstImageUrl(
+        button,
+        ["fullImageUrl", "imageUrl", "imgUrl"],
+        JD_SKU_IMAGE_PREFIX,
+      );
 
       if (skuText && skuImage) {
         parseData.SKUImg[skuText] = skuImage;
@@ -287,7 +311,11 @@ function mergeSkuImagesFromPage(parseData: IParseData) {
 /**
  * 生成 SKUInfo，接口没有标题结构时使用 SKUKey 和商品标题兜底
  */
-function fillSkuInfo(parseData: IParseData, source: UnknownRecord, pageStateRecords: UnknownRecord[]) {
+function fillSkuInfo(
+  parseData: IParseData,
+  source: UnknownRecord,
+  pageStateRecords: UnknownRecord[],
+) {
   const skuIds = getResultSkuIds(parseData);
   const sourceSkuInfo = collectSkuInfoFromData([source, ...pageStateRecords], new Set(skuIds));
 
@@ -339,7 +367,9 @@ function fillJdSkuImages(parseData: IParseData) {
 
   const selectedSkuValues = parseData.SKUKey[parseData.goodsId] ?? [];
   const selectedImageSku =
-    selectedSkuValues.find((value) => Boolean(parseData.SKUImg[value])) || selectedSkuValues[0] || "";
+    selectedSkuValues.find((value) => Boolean(parseData.SKUImg[value])) ||
+    selectedSkuValues[0] ||
+    "";
 
   if (selectedImageSku) {
     for (const image of parseData.mainImg) {
@@ -377,7 +407,13 @@ function collectSkuInfoFromData(sources: unknown[], skuIds: Set<string>) {
 
   for (const source of sources) {
     walkRecord(source, (record) => {
-      const explicitSkuId = firstText([record.skuId, record.sku_id, record.id, record.wareId, record.productId]);
+      const explicitSkuId = firstText([
+        record.skuId,
+        record.sku_id,
+        record.id,
+        record.wareId,
+        record.productId,
+      ]);
       const matchedSkuId = normalizeSkuId(explicitSkuId);
 
       if (matchedSkuId && skuIds.has(matchedSkuId)) {
@@ -448,7 +484,14 @@ function collectSkuPricesFromData(sources: unknown[], skuIds: Set<string>) {
   for (const source of sources) {
     walkRecord(source, (record) => {
       const explicitSkuId = normalizeSkuId(
-        firstText([record.skuId, record.sku_id, record.id, record.wareId, record.productId, record.pid]),
+        firstText([
+          record.skuId,
+          record.sku_id,
+          record.id,
+          record.wareId,
+          record.productId,
+          record.pid,
+        ]),
       );
       const explicitPrice = readPrice(record);
 
@@ -477,7 +520,9 @@ function collectSkuPricesFromData(sources: unknown[], skuIds: Set<string>) {
           continue;
         }
 
-        const skuId = normalizeSkuId(firstText([itemRecord.skuId, itemRecord.sku_id, itemRecord.id, itemRecord.pid]));
+        const skuId = normalizeSkuId(
+          firstText([itemRecord.skuId, itemRecord.sku_id, itemRecord.id, itemRecord.pid]),
+        );
         const price = readPrice(itemRecord);
 
         if (skuId && skuIds.has(skuId) && price) {
@@ -706,7 +751,12 @@ function getCurrentDomPrice() {
 
   return normalizePrice(
     firstText([
-      getTextBySelectors([".summary-price .p-price .price", ".summary-price .price", ".p-price .price", "#jd-price"]),
+      getTextBySelectors([
+        ".summary-price .p-price .price",
+        ".summary-price .price",
+        ".p-price .price",
+        "#jd-price",
+      ]),
       getTextBySelectors([
         "[class*='summary-price'] [class*='price']",
         "[class*='price'] strong",
@@ -759,7 +809,9 @@ function collectImagesFromElement(element: HTMLElement) {
     }
   }
 
-  for (const image of extractImagesFromStyle(element.getAttribute("style") || element.style.backgroundImage)) {
+  for (const image of extractImagesFromStyle(
+    element.getAttribute("style") || element.style.backgroundImage,
+  )) {
     pushUnique(images, image);
   }
 
@@ -807,7 +859,11 @@ function collectSkuImagesFromPageState() {
   for (const record of collectJdPageStateRecords()) {
     walkRecord(record, (item) => {
       const skuText = firstText([item.text, item.name, item.title, item.skuName, item.color]);
-      const image = firstImageUrl(item, ["fullImageUrl", "imageUrl", "imgUrl", "url", "src"], JD_SKU_IMAGE_PREFIX);
+      const image = firstImageUrl(
+        item,
+        ["fullImageUrl", "imageUrl", "imgUrl", "url", "src"],
+        JD_SKU_IMAGE_PREFIX,
+      );
 
       if (skuText && image) {
         skuImages[skuText] = image;
@@ -1003,7 +1059,12 @@ function toTextList(value: unknown) {
 /**
  * 递归遍历对象，给 SKUInfo 和 SKUPrice 做弱结构兜底
  */
-function walkRecord(value: unknown, visitor: (record: UnknownRecord) => void, seen = new WeakSet<object>(), depth = 0) {
+function walkRecord(
+  value: unknown,
+  visitor: (record: UnknownRecord) => void,
+  seen = new WeakSet<object>(),
+  depth = 0,
+) {
   if (depth > 8 || typeof value !== "object" || value === null || seen.has(value)) {
     return;
   }
@@ -1091,7 +1152,9 @@ function toText(value: unknown) {
  * unknown 转对象
  */
 function toRecord(value: unknown): UnknownRecord | null {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as UnknownRecord) : null;
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as UnknownRecord)
+    : null;
 }
 
 /**
@@ -1135,7 +1198,9 @@ function pushUniqueRecord(target: UnknownRecord[], value: UnknownRecord) {
 
   if (
     !target.some(
-      (item) => JSON.stringify({ kind: item.kind, url: item.url, capturedAt: item.capturedAt }) === signature,
+      (item) =>
+        JSON.stringify({ kind: item.kind, url: item.url, capturedAt: item.capturedAt }) ===
+        signature,
     )
   ) {
     target.push(value);
