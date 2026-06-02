@@ -1,6 +1,8 @@
 import { defineManifest } from "@crxjs/vite-plugin";
 import pkg from "./package.json";
 
+const matches = ["https://*.jd.com/*", "https://mms.pinduoduo.com/*", "https://item.taobao.com/*"];
+
 export default defineManifest({
   manifest_version: 3,
   name: pkg.name,
@@ -19,7 +21,7 @@ export default defineManifest({
   content_scripts: [
     {
       js: ["src/content/views/inject.ts"],
-      matches: ["https://*.jd.com/*", "https://mms.pinduoduo.com/*"],
+      matches,
       run_at: "document_start",
       world: "MAIN",
     },
